@@ -1,0 +1,68 @@
+name: Build and Sysdig Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  ECR_REGISTRY: 676928793871.dkr.ecr.us-west-2.amazonaws.com
+  ECR_REPO: k-images
+
+jobs:
+  build-and-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [vote, worker, result]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build image
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPO:${{ matrix.app }}-${{ github.sha }} ./${{ matrix.app }}
+
+      - name: Download Sysdig CLI Scanner
+        run: |
+          curl -LO "https://download.sysdig.com/scanning/bin/sysdig-cli-scanner/$(curl -L -s https://download.sysdig.com/scanning/sysdig-cli-scanner/latest_version.txt)/linux/amd64/sysdig-cli-scanner"
+          chmod +x sysdig-cli-scanner
+
+      - name: Scan image with Sysdig
+        run: |
+          SECURE_API_TOKEN=${{ secrets.SECURE_API_TOKEN }} ./sysdig-cli-scanner \
+            --apiurl https://app.us4.sysdig.com \
+            -d /tmp/sysdig-db \
+            $ECR_REGISTRY/$ECR_REPO:${{ matrix.app }}-${{ github.sha }}
+
+      - name: Push to ECR
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPO:${{ matrix.app }}-${{ github.sha }}
+
+  iac-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Sysdig IaC Scan
+        uses: sysdiglabs/scan-action@v5
+        with:
+          sysdig-secure-token: ${{ secrets.SECURE_API_TOKEN }}
+          sysdig-secure-url: https://app.us4.sysdig.com
+          iac-scan: true
+          recursive: true
+          minimum-severity: HIGH
