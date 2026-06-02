@@ -1,4 +1,4 @@
-name: Build and Sysdig Scan
+name: Build and Sysdig Scans
 
 on:
   push:
